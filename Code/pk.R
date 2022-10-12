@@ -115,15 +115,26 @@ my_theme <-
 set_gtsummary_theme(my_theme)
 library(gtsummary)
 library(kableExtra)
-
-
+cordata_lm
+density_cor <- function(i) {
+  cordata_lm %>%
+    mutate(sex = ifelse(sex == "남성", "male", "female")) %>%
+    ggplot(aes(x = {{i}}, col = sex, fill = sex)) +
+    geom_density(alpha = 0.3) +
+    facet_wrap(vars(substance), scale = "free") +
+    theme_bw() +
+    theme(strip.background = element_rect(fill = NA, colour = NA)) +
+    scale_color_manual(values = c("red", "blue"), aesthetics = c("colour", "fill"))
+}
+library(tidyverse)
+density_cor(LAMZHL)
 nca1 %>%
   select(-Subject, -TMAX) %>%
   tbl_summary(by=substance) %>%
   modify_header(label = "**Parameter**") %>%
   bold_labels()
 library(gtsummary)
-
+?geom_density
 nca2 <- tblNCA(ncadata2, 
                key=c("substance", "Subject"), 
                colTime="time", 
@@ -193,6 +204,14 @@ cordata_r <- cordata %>%
 
 str(cordata_r)
 chart.Correlation(cordata_r %>% filter(substance == "irinotecan") %>% select(-substance), histogram = TRUE, pch = 19)
+
+
+
+cordata_lm <- cordata %>%
+  mutate_at(vars("age", "WT", "BSA"), as.numeric) %>%
+  select(substance, LAMZHL, CMAX_dn, AUCLST_dn, AUCIFO_dn, age, sex, WT, BSA)
+m1 <- lm(LAMZHL ~ sex + age + WT+ BSA, data = cordata_lm)
+tbl_regression(m1)
 plot(cordata %>% filter(rowdn == "dn" & method == 1) %>% select(AUCLST, age, sex))
 plot(cordata %>% filter(rowdn == "dn" & method == 1) %>% select(CMAX, age, sex))
 plot(cordata %>% filter(rowdn == "dn" & method == 1 ) %>% select(LAMZHL, age, sex))
@@ -201,3 +220,23 @@ plot(cordata %>% filter(rowdn == "dn" & method == 2) %>% select(AUCLST, age, sex
 plot(cordata %>% filter(rowdn == "dn" & method == 2) %>% select(CMAX, age, sex))
 plot(cordata %>% filter(rowdn == "dn" & method == 2 ) %>% select(LAMZHL, age, sex))
 
+dev.off()
+
+
+library(gtsummary)
+library(tidyverse)
+
+tbl <-
+  c("cyl", "cyl + disp") %>% # vector of covariates
+  map(
+    ~ paste("mpg", .x, sep = " ~ ") %>% # build character formula
+      as.formula() %>% # convert to proper formula
+      lm(data = mtcars) %>% # build linear regression model
+      tbl_regression() # display table with gtsummary
+  ) %>%
+  # merge tables into single table
+  tbl_merge(
+    tab_spanner = c("**Univariate**", "**Multivariable**")
+  )
+tbl
+list(1, 2)
