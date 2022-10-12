@@ -1,0 +1,423 @@
+---
+title: "Analysis_m"
+author: "Suein Choi"
+date: "2022-10-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+library(readxl)
+library(tidyverse)
+library(NonCompart)
+library(plotly)
+library(gtsummary)
+library(kableExtra)
+library(PerformanceAnalytics)
+my_theme <-
+  list(
+    # round large p-values to two places
+    "pkgwide-fn:pvalue_fun" = function(x) style_pvalue(x, digits = 2),
+    "pkgwide-fn:prependpvalue_fun" = function(x) style_pvalue(x, digits = 2, prepend_p = TRUE),
+    # report median (IQR) and n (percent) as default stats in `tbl_summary()`
+    "tbl_summary-str:continuous_stat" = "{mean} ± {sd}",
+    "tbl_summary-str:categorical_stat" = "{n} ({p}%)"
+  )
+set_gtsummary_theme(my_theme)
+
+
+```
+
+## Data
+
+SNB101 from AIMS bio science 
+
+1) Individual concentration plots
+2) Mean+sd concentration plots
+3) Naive NCA results
+    1) After administration (time >= 0)
+    2) From the beginning of administration (time >= -2)
+4) Dose-normalized NCA results
+    1) After administration (time >= 0)
+    2) From the beginning of administration (time >= -2)
+5) Simple covariate analysis using correlation & linear regression
+
+**Plots are shown in interactive way**
+Click the name (irinotecan, SN-38, SN-38G) on the label for the seperated view (Right side of the plot)
+
+
+## Individual concentration plots
+
+```{r indiv, fig.height = 12, fig.width = 10, warning = FALSE}
+
+pkdata <- read_excel("Data/PK_NCA.xlsx")
+
+pkdata1 <- pkdata %>%
+    gather(substance, conc, 4:6) %>%
+    mutate(conc = as.numeric(conc)) %>%
+    filter(!is.na(conc))
+
+
+ind_plot <- pkdata1 %>%
+    ggplot(aes(x = time, y = conc, col = substance)) +
+    geom_line(alpha = 0.3) +
+    geom_point(alpha = 0.3) +
+    facet_wrap(~Subject, ncol = 3, scales = "free") +
+    scale_x_continuous(breaks = seq(0, 24, 4)) +
+    labs(
+        x = "Time (h)", y = "Plasma Concentration",
+        col = " "
+    ) +
+    theme_bw() +
+    theme(strip.background = element_rect(fill = NA, colour = NA)) +
+    ggsci::scale_color_aaas()
+
+ggplotly(ind_plot)
+```
+
+
+## Mean+sd concentration plot
+
+
+```{r mean_sd, echo=FALSE, fig.width = 10}
+mean_plot <- pkdata1 %>%
+    group_by(substance, time) %>%
+    mutate(mean = mean(conc), sd = sd(conc)) %>%
+    ggplot(aes(x = time, y = mean, col = substance)) +
+    geom_point(size = 2, alpha = 0.5) +
+    geom_line(size = 0.5, alpha = 0.5) +
+    geom_errorbar(aes(ymin = mean, ymax = mean + sd)) +
+    facet_wrap(~substance, scales = "free_x") +
+    scale_x_continuous(breaks = seq(0, 72, 24)) +
+    labs(x = "Time (h)", y = "Plasma Concentration (?)") +
+    theme_bw() +
+    theme(strip.background = element_rect(fill = NA, colour = NA)) +
+    ggsci::scale_color_aaas()
+
+
+mean_plot24_both <- cowplot::plot_grid(mean_plot, mean_plot + scale_y_log10(), labels = LETTERS[1:2], ncol = 1)
+
+mean_plot24_both
+
+```
+
+
+## Naive NCA results
+
+NCA result with individual dose
+
+### After end of adminitration (time >= 0)
+
+End of administration시점부터의 NCA 계산함 (time < 0는 분석에서 제외함)
+
+### {.tabset}
+
+#### Irinotecan
+```{r naive_nca_iri}
+
+ncadata1 <- pkdata1 %>% filter(time >= 0) %>% as.data.frame()
+
+ncadata2 <- pkdata1 %>% mutate(time = time+2) %>%
+  arrange(Subject, substance, time) %>% as.data.frame() 
+
+nca1 <- tblNCA(ncadata1, 
+              key=c("substance", "Subject"), 
+              colTime="time", 
+              colConc="conc",
+              R2ADJ=0.1) %>%
+        select(substance, Subject, CMAX, TMAX, LAMZHL, AUCLST, AUCIFO) %>%
+        as.data.frame()
+
+
+kable_new <- function(data, ip){
+  data %>%
+        filter(substance == ip) %>%
+          select(-substance) %>%
+          kbl() %>%
+          kable_styling(bootstrap_options = c("striped"))
+}
+
+kable_new(nca1, "irinotecan")
+
+
+```
+
+#### SN-38
+```{r naive_nca_sn38}
+#| collapse = TRUE
+kable_new(nca1, "SN-38")
+
+```
+
+
+#### SN-38G
+```{r naive_nca_sn38G}
+#| collapse = TRUE
+
+kable_new(nca1, "SN-38G")
+
+
+```
+
+#### Summary
+```{r naive_nca}
+#| collapse = TRUE
+nca1 %>%
+  select(-Subject, -TMAX) %>%
+  tbl_summary(by=substance,
+            digits = all_continuous() ~ 3) %>%
+  modify_header(label = "**Parameter**") %>%
+  bold_labels()
+
+```
+
+
+### From the beginning of administration (time >= -2)
+
+용량 주입 시점 (time = -2) 부터의 NCA를 계산함 (Continuous infusion, duration은 2hr 로 설정)
+
+### {.tabset}
+
+#### Irinotecan
+```{r naive_nca2_iri}
+
+
+nca2 <- tblNCA(ncadata1, 
+              key=c("substance", "Subject"), 
+              colTime="time", 
+              colConc="conc",
+              R2ADJ=0.1) %>%
+        select(substance, Subject, CMAX, TMAX, LAMZHL, AUCLST, AUCIFO) %>%
+        as.data.frame()
+kable_new(nca2, "irinotecan")
+
+
+```
+
+#### SN-38
+```{r naive_nca2_sn38}
+#| collapse = TRUE
+
+kable_new(nca2, "SN-38")
+
+
+```
+
+
+#### SN-38G
+```{r naive_nca2_sn38G}
+#| collapse = TRUE
+kable_new(nca2, "SN-38G")
+
+
+```
+
+#### Summary
+```{r naive_nca2}
+#| collapse = TRUE
+nca2 %>%
+  select(-Subject, -TMAX) %>%
+  tbl_summary(by=substance,
+            digits = all_continuous() ~ 3) %>%
+  modify_header(label = "**Parameter**") %>%
+  bold_labels()
+
+```
+
+## Dose-normalized NCA results
+
+### After administration (time >= 0)
+### {.tabset}
+
+#### Irinotecan
+```{r nca_iri}
+
+iddose <- read_excel("Data/SNB101_Phase I_raw data_20221011 (1).xlsx", sheet="dose") 
+snrn1 <- read_excel("Data/SNB101_Phase I_raw data_20221011.xlsx", sheet="PKRaw_Cycle 1")  
+snrn <- t(snrn1[1:2, 2:17]) %>% as.data.frame() %>%  distinct()
+colnames(snrn) <- c("Subject", "SID")
+colnames(iddose) <- c("SID", "dose")
+iddose1 <- iddose %>% full_join(snrn) %>% mutate(dose = as.numeric(dose))
+iddose1[1, 3] <- "C1_01-001"
+
+iddose1 <- iddose1 %>% 
+    filter(Subject %in% unique(pkdata1$Subject))
+
+nca_dn1 <- nca1 %>%
+  left_join(iddose1) %>%
+  select(-SID) %>%
+  mutate(CMAX_dn = CMAX/dose, AUCLST_dn = AUCLST/dose, AUCIFO_dn = AUCIFO/dose) %>%
+  select(-CMAX, -TMAX, -AUCLST, -AUCIFO, -LAMZHL) %>%
+  select(Subject, dose, everything()) %>%
+  rename(Dose = dose)
+
+nca_dn1_s <- nca1 %>%
+  left_join(iddose1) %>%
+  mutate(CMAX_dn = CMAX/dose, AUCLST_dn = AUCLST/dose, AUCIFO_dn = AUCIFO/dose) %>%
+  select(-CMAX, -TMAX, -AUCLST, -AUCIFO) %>%
+  select(Subject, dose, everything()) %>%
+  rename(Dose = dose)
+
+kable_new(nca_dn1, "irinotecan")
+
+
+```
+
+#### SN-38
+```{r nca_sn38}
+#| collapse = TRUE
+
+kable_new(nca_dn1, "SN-38")
+
+
+```
+
+
+#### SN-38G
+```{r nca_sn38G}
+#| collapse = TRUE
+
+kable_new(nca_dn1, "SN-38G")
+
+```
+
+#### Summary
+```{r nca}
+#| collapse = TRUE
+nca_dn1 %>%
+  select(-Subject) %>%
+  tbl_summary(by=substance,
+            digits = all_continuous() ~ 3) %>%
+  modify_header(label = "**Parameter**") %>%
+  bold_labels()
+
+```
+
+
+
+### From the beginning of administration (time >= -2)
+### {.tabset}
+
+#### Irinotecan
+```{r nca2_iri, message = FALSE}
+
+nca_dn2 <- nca2 %>%
+  left_join(iddose1) %>%
+  select(-SID) %>%
+  mutate(CMAX_dn = CMAX/dose, AUCLST_dn = AUCLST/dose, AUCIFO_dn = AUCIFO/dose) %>%
+  select(-CMAX, -TMAX, -AUCLST, -AUCIFO, -LAMZHL) %>%
+  select(Subject, dose, everything()) %>%
+  rename(Dose = dose)
+
+nca_dn2_s <- nca2 %>%
+  left_join(iddose1) %>%
+  mutate(CMAX_dn = CMAX/dose, AUCLST_dn = AUCLST/dose, AUCIFO_dn = AUCIFO/dose) %>%
+  select(-CMAX, -TMAX, -AUCLST, -AUCIFO) %>%
+  select(Subject, dose, everything()) %>%
+  rename(Dose = dose)
+
+kable_new(nca_dn2, "irinotecan")
+
+
+```
+
+#### SN-38
+```{r nca2_sn38}
+#| collapse = TRUE
+
+kable_new(nca_dn2, "SN-38")
+
+```
+
+
+#### SN-38G
+```{r nca2_sn38G}
+#| collapse = TRUE
+kable_new(nca_dn2, "SN-38G")
+
+```
+
+#### Summary
+```{r nca2}
+#| collapse = TRUE
+nca_dn2 %>%
+  select(-Subject) %>%
+  tbl_summary(by=substance,
+            digits = all_continuous() ~ 3) %>%
+  modify_header(label = "**Parameter**") %>%
+  bold_labels()
+
+```
+
+## Simple covariate analysis using correlation & linear regression
+
+
+### Correlation plot 
+
+```{r}
+dm <- read_excel("Data/SNB101_Phase I_raw data_20221011.xlsx", sheet= "DM") %>% 
+  select(1,4,5) 
+hw <- read_excel("Data/SNB101_Phase I_raw data_20221011.xlsx", sheet = "HW") %>%
+  select(1, 3, 6, 8)
+
+colnames(dm) <- c("SID", "age", "sex")
+colnames(hw) <- c("SID", "VISIT", "WT", "BSA")
+cordata <- nca_dn1_s %>% left_join(dm) %>% left_join(hw %>% filter(VISIT == "C1D1"))
+cordata_r <- cordata %>%
+  mutate(sex = ifelse(sex == "남성", 1, 0)) %>%
+  mutate_at(vars("age", "WT", "BSA"), as.numeric) %>%
+  select(substance, LAMZHL, CMAX_dn, AUCLST_dn, AUCIFO_dn, age, sex, WT, BSA) 
+chart.Correlation(cordata_r %>% filter(substance == "irinotecan") %>% select(-substance, -sex), histogram = TRUE, pch = 19)
+
+```
+
+
+### Linear regression (Univariate) result
+
+```{r}
+cordata_lm <- cordata %>%
+  mutate_at(vars("age", "WT", "BSA"), as.numeric) %>%
+  select(substance, LAMZHL, CMAX_dn, AUCLST_dn, AUCIFO_dn, age, sex, WT, BSA)
+
+m1 <- lm(LAMZHL ~ sex + age + WT+ BSA, data = cordata_lm)
+m2 <- lm(CMAX_dn ~ sex + age + WT+ BSA, data = cordata_lm)
+m3 <- lm(AUCLST_dn ~ sex + age + WT+ BSA, data = cordata_lm)
+
+tbl_merge(list(tbl_regression(m1),tbl_regression(m2),tbl_regression(m3)),
+    tab_spanner = c("**LAMZHL**", "**CMAX_dn**", "**AUCLST_dn**"))
+
+```
+
+### Simple distribution for categorical variable (sex)
+### {.tabset}
+
+#### LAMZHL
+```{r a}
+#| collapse = TRUE
+
+density_cor <- function(i){
+cordata_lm %>%
+    mutate(sex = ifelse(sex == "남성", "male", "female")) %>%
+    ggplot(aes(x = {{i}}, col = sex, fill = sex)) +
+    geom_density(alpha = 0.3) +
+    facet_wrap(vars(substance), scale ="free")+
+    theme_bw() +
+    theme(strip.background = element_rect(fill = NA, colour = NA)) +
+    scale_color_manual(values = c("red", "blue"), aesthetics = c("colour", "fill"))}
+
+density_cor(LAMZHL)
+```
+
+#### CMAX_dn 
+```{r b}
+#| collapse = TRUE
+density_cor(CMAX_dn)
+```
+
+
+#### AUCLST_dn 
+```{r c}
+#| collapse = TRUE
+density_cor(AUCLST_dn)
+```
+
